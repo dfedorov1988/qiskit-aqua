@@ -141,6 +141,7 @@ class VQE(VQAlgorithm, MinimumEigensolver):
                 variational form, the evaluated mean and the evaluated standard deviation.`
             quantum_instance: Quantum Instance or Backend
         """
+        
         validate_min('max_evals_grouped', max_evals_grouped, 1)
         if var_form is None:
             var_form = RealAmplitudes()
