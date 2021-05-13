@@ -62,7 +62,10 @@ class UCCSD(VariationalForm):
                  method_doubles: str = 'ucc',
                  excitation_type: str = 'sd',
                  same_spin_doubles: bool = True,
-                 skip_commute_test: bool = False) -> None:
+                 skip_commute_test: bool = False,
+                 single_exc_op_list: List[int] = None,
+                 double_exc_op_list: List[int] = None,
+                 triple_exc_op_list: List[int] = None) -> None:
         """Constructor.
 
         Args:
@@ -144,13 +147,27 @@ class UCCSD(VariationalForm):
         self.same_spin_doubles = same_spin_doubles
         self._skip_commute_test = skip_commute_test
 
-        self._single_excitations, self._double_excitations = \
+
+
+        # If we prescreened excitations elsewhere can pass them into UCCSD object as
+        # single_exc_op_list and double_exc_op_list
+        if not single_exc_op_list or not double_exc_op_list:
+            self._single_excitations, self._double_excitations = \
             UCCSD.compute_excitation_lists([self._num_alpha, self._num_beta], self._num_orbitals,
                                            active_occupied, active_unoccupied,
                                            same_spin_doubles=self.same_spin_doubles,
                                            method_singles=self._method_singles,
                                            method_doubles=self._method_doubles,
                                            excitation_type=self._excitation_type,)
+        else:
+            self._single_excitations, self._double_excitations = \
+                single_exc_op_list, double_exc_op_list
+
+        # self._triple_excitations = triple_exc_op_list
+        if triple_exc_op_list is not None:
+            self._triple_excitations = triple_exc_op_list
+        else:
+            self._triple_excitations = []
 
         self._hopping_ops, self._num_parameters = self._build_hopping_operators()
         self._excitation_pool = None  # type: Optional[List[WeightedPauliOperator]]
@@ -226,6 +243,16 @@ class UCCSD(VariationalForm):
         return self._double_excitations
 
     @property
+    def triple_excitations(self):
+        """
+        Getter of double excitation list
+        Returns:
+            list[list[int]]: double excitation list
+        """
+        return self._triple_excitations
+
+
+    @property
     def excitation_pool(self) -> List[WeightedPauliOperator]:
         """Returns the full list of available excitations (called the pool)."""
         return self._excitation_pool
@@ -240,7 +267,7 @@ class UCCSD(VariationalForm):
             TextProgressBar(sys.stderr)
 
         results = parallel_map(UCCSD._build_hopping_operator,
-                               self._single_excitations + self._double_excitations,
+                               self._single_excitations + self._double_excitations + self._triple_excitations,
                                task_args=(self._num_orbitals, self._num_particles,
                                           self._qubit_mapping, self._two_qubit_reduction,
                                           self._z2_symmetries,
@@ -249,16 +276,20 @@ class UCCSD(VariationalForm):
         hopping_ops = []
         s_e_list = []
         d_e_list = []
+        t_e_list = []
         for op, index in results:
             if op is not None and not op.is_empty():
                 hopping_ops.append(op)
-                if len(index) == 2:  # for double excitation
+                if len(index) == 6:
+                    t_e_list.append(index)
+                elif len(index) == 2:  # for single excitation
                     s_e_list.append(index)
                 else:  # for double excitation
                     d_e_list.append(index)
 
         self._single_excitations = s_e_list
         self._double_excitations = d_e_list
+        self._triple_excitations = t_e_list
 
         num_parameters = len(hopping_ops) * self._reps
         return hopping_ops, num_parameters
@@ -291,6 +322,8 @@ class UCCSD(VariationalForm):
         """
         h_1 = np.zeros((num_orbitals, num_orbitals))
         h_2 = np.zeros((num_orbitals, num_orbitals, num_orbitals, num_orbitals))
+        h_3 = np.zeros((num_orbitals, num_orbitals, num_orbitals, num_orbitals, num_orbitals, num_orbitals))
+
         if len(index) == 2:
             i, j = index
             h_1[i, j] = 1.0
@@ -299,8 +332,12 @@ class UCCSD(VariationalForm):
             i, j, k, m = index
             h_2[i, j, k, m] = 1.0
             h_2[m, k, j, i] = -1.0
+        elif len(index) == 6:
+            i, j, k, m, p, q = index
+            h_3[i, j, k, m, p, q] = 1.0
+            h_3[q, p, m, k, j, i] = -1.0
 
-        dummpy_fer_op = FermionicOperator(h1=h_1, h2=h_2)
+        dummpy_fer_op = FermionicOperator(h1=h_1, h2=h_2, h3=h_3)
         qubit_op = dummpy_fer_op.mapping(qubit_mapping)
         if two_qubit_reduction:
             qubit_op = Z2Symmetries.two_qubit_reduction(qubit_op, num_particles)
@@ -416,7 +453,6 @@ class UCCSD(VariationalForm):
         #        for (qubit_op, param) in list_excitation_operators]
         # circuit += reduce(lambda x, y: x @ y, reversed(ops)).to_circuit()
         # return circuit
-
         results = parallel_map(UCCSD._construct_circuit_for_one_excited_operator,
                                list_excitation_operators,
                                task_args=(q, self._num_time_slices),
@@ -444,6 +480,9 @@ class UCCSD(VariationalForm):
         qc = qubit_op.evolve(state_in=None, evo_time=param,
                              num_time_slices=num_time_slices,
                              quantum_registers=qr)
+        # print("\nparam", param)
+        # print("qr", qr)
+        # print("qc", qc.decompose())
         return qc
 
     @property

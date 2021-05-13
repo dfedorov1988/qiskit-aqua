@@ -141,7 +141,6 @@ class VQE(VQAlgorithm, MinimumEigensolver):
                 variational form, the evaluated mean and the evaluated standard deviation.`
             quantum_instance: Quantum Instance or Backend
         """
-        
         validate_min('max_evals_grouped', max_evals_grouped, 1)
         if var_form is None:
             var_form = RealAmplitudes()
@@ -462,7 +461,6 @@ class VQE(VQAlgorithm, MinimumEigensolver):
             self._eval_aux_ops()
             # TODO remove when ._ret is deprecated
             result.aux_operator_eigenvalues = self._ret['aux_ops'][0]
-
         result.cost_function_evals = self._eval_count
 
         return result
@@ -475,7 +473,6 @@ class VQE(VQAlgorithm, MinimumEigensolver):
                                                        is_measurement=True))
         aux_op_expect = aux_op_meas.compose(CircuitStateFn(self.get_optimal_circuit()))
         values = np.real(sampler.convert(aux_op_expect).eval())
-
         # Discard values below threshold
         aux_op_results = (values * (np.abs(values) > threshold))
         # Deal with the aux_op behavior where there can be Nones or Zero qubit Paulis in the list
@@ -483,7 +480,8 @@ class VQE(VQAlgorithm, MinimumEigensolver):
                                 for (is_none, result) in zip(self._aux_op_nones, aux_op_results)]
         # As this has mixed types, since it can included None, it needs to explicitly pass object
         # data type to avoid numpy 1.19 warning message about implicit conversion being deprecated
-        self._ret['aux_ops'] = np.array([self._ret['aux_ops']], dtype=object)
+        # self._ret['aux_ops'] = np.array([self._ret['aux_ops']], dtype=object)
+        self._ret['aux_ops'] = aux_op_results
 
     def compute_minimum_eigenvalue(
             self,

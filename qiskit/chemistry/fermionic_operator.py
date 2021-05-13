@@ -50,7 +50,7 @@ class FermionicOperator:
 
     """
 
-    def __init__(self, h1, h2=None, ph_trans_shift=None):
+    def __init__(self, h1, h2=None, h3=None, ph_trans_shift=None):
         """
         This class requires the integrals stored in the '*chemist*' notation
 
@@ -82,6 +82,10 @@ class FermionicOperator:
         if h2 is None:
             h2 = np.zeros((h1.shape[0], h1.shape[0], h1.shape[0], h1.shape[0]), dtype=h1.dtype)
         self._h2 = h2
+
+        # if h3 is None:
+        #     h3 = np.zeros((h1.shape[0], h1.shape[0], h1.shape[0], h1.shape[0], h1.shape[0], h1.shape[0]), dtype=h1.dtype)
+        self._h3 = h3
         self._ph_trans_shift = ph_trans_shift
         self._modes = self._h1.shape[0]
         self._map_type = None
@@ -110,6 +114,17 @@ class FermionicOperator:
     def h2(self, new_h2):  # pylint: disable=invalid-name
         """Setter of two body integral tensor."""
         self._h2 = new_h2
+
+    @property
+    def h3(self):  # pylint: disable=invalid-name
+        """Getter of three body integral tensor."""
+        return self._h3
+
+    @h3.setter
+    def h3(self, new_h3):  # pylint: disable=invalid-name
+        """Setter of three body integral tensor."""
+        self._h3 = new_h3
+
 
     def __eq__(self, other):
         """Overload == ."""
@@ -404,6 +419,22 @@ class FermionicOperator:
                                task_args=(threshold,), num_processes=aqua_globals.num_processes)
         for result in results:
             pauli_list += result
+
+
+        # Trying to implement triples
+        if self._h3 is not None:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Mapping triple excitations:")
+                TextProgressBar(output_handler=sys.stderr)
+            results = parallel_map(FermionicOperator._three_body_mapping,
+                                   [(self._h3[i, j, k, m, p, q], a_list[i], a_list[j], a_list[k],
+                                     a_list[m], a_list[p], a_list[q])
+                                    for i, j, k, m, p, q in itertools.product(range(n), repeat=6)
+                                    if self._h3[i, j, k, m, p, q] != 0],
+                                   task_args=(threshold,), num_processes=aqua_globals.num_processes)
+            for result in results:
+                pauli_list += result
+
         pauli_list.chop(threshold=threshold)
 
         if self._ph_trans_shift is not None:
@@ -465,7 +496,48 @@ class FermionicOperator:
                         pauli_term = [h2_ijkm / 16 * phase1 * phase2, pauli_prod_3[0]]
                         if np.absolute(pauli_term[0]) > threshold:
                             pauli_list.append(pauli_term)
+        # print("DOUBLE EXC", WeightedPauliOperator(paulis=pauli_list))
         return WeightedPauliOperator(paulis=pauli_list)
+
+    @staticmethod
+    def _three_body_mapping(h3_ijkmpq_a_ijkmpq, threshold):
+        """
+        Subroutine for three body mapping. We use the chemists notation
+        for the two-body term, h2(i,j,k,m,p,q) adag_i adag_k adag_p a_q a_m a_j .
+
+        Args:
+            h2_ijkmpq_a_ijkmpq (tuple): value of h3 at index (i,j,k,m,p,q),
+                                    pauli at index i, pauli at index j, 
+                                    pauli at index k, pauli at index m,
+                                    pauli at index p, pauli at index q
+            threshold (float): threshold to remove a pauli
+
+        Returns:
+            WeightedPauliOperator: Operator for those paulis
+        """
+        h3_ijkmpq, a_i, a_j, a_k, a_m, a_p, a_q = h3_ijkmpq_a_ijkmpq
+        pauli_list = []
+        for alpha in range(2):
+            for beta in range(2):
+                for gamma in range(2):
+                    for delta in range(2):
+                        for theta in range(2):
+                            for phi in range(2):
+                                pauli_prod_1 = Pauli.sgn_prod(a_i[alpha], a_k[beta])
+                                pauli_prod_2 = Pauli.sgn_prod(pauli_prod_1[0], a_p[gamma])
+                                pauli_prod_3 = Pauli.sgn_prod(pauli_prod_2[0], a_q[delta])
+                                pauli_prod_4 = Pauli.sgn_prod(pauli_prod_3[0], a_m[theta])
+                                pauli_prod_5 = Pauli.sgn_prod(pauli_prod_4[0], a_j[phi])
+
+                                phase1 = pauli_prod_1[1] * pauli_prod_2[1] * pauli_prod_3[1] * \
+                                    pauli_prod_4[1] * pauli_prod_5[1]
+                                phase2 = np.power(-1j, alpha + beta + gamma) * \
+                                    np.power(1j, delta + theta + phi)
+                                pauli_term = [h3_ijkmpq / 64 * phase1 * phase2, pauli_prod_5[0]]
+                                if np.absolute(pauli_term[0]) > threshold:
+                                    pauli_list.append(pauli_term)
+        return WeightedPauliOperator(paulis=pauli_list)
+
 
     def _convert_to_interleaved_spins(self):
         """
